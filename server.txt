@@ -1,0 +1,347 @@
+from fastapi import FastAPI, Request
+import uvicorn
+import time
+import os
+import numpy as np
+
+from datetime import datetime
+
+from PIL import Image
+from tensorflow.keras.models import load_model
+
+import mysql.connector
+
+# =====================================
+
+# FASTAPI
+
+# =====================================
+
+app = FastAPI()
+
+# =====================================
+
+# CREAR CARPETA CAPTURAS
+
+# =====================================
+
+os.makedirs("capturas", exist_ok=True)
+
+# =====================================
+
+# CONEXIÓN MYSQL
+
+# =====================================
+
+db = mysql.connector.connect(
+host="localhost",
+user="root",
+password="",
+database="tesinabonetto"
+)
+
+cursor = db.cursor()
+
+print("✅ Conectado a MySQL")
+
+# =====================================
+
+# ACTUALIZAR ESTADO
+
+# =====================================
+
+def actualizar_estado(
+dispositivo_id,
+estado,
+categoria=None,
+confianza=None
+):
+
+try:
+
+    cursor.execute("""
+        DELETE FROM estados_dispositivo
+        WHERE dispositivo_id = %s
+    """, (dispositivo_id,))
+
+    cursor.execute("""
+        INSERT INTO estados_dispositivo
+        (
+            dispositivo_id,
+            estado,
+            categoria,
+            confianza
+        )
+        VALUES
+        (%s,%s,%s,%s)
+    """,
+    (
+        dispositivo_id,
+        estado,
+        categoria,
+        confianza
+    ))
+
+    db.commit()
+
+    print("✅ Estado:", estado)
+
+except Exception as e:
+
+    print("❌ Error actualizando estado")
+    print(e)
+
+
+# =====================================
+
+# CARGAR MODELO
+
+# =====================================
+
+model = load_model("keras_model.h5", compile=False)
+
+print("✅ Modelo cargado")
+
+# =====================================
+
+# LEER LABELS
+
+# =====================================
+
+with open("labels.txt", "r", encoding="utf-8") as f:
+
+
+class_names = []
+
+for line in f:
+
+    line = line.strip()
+
+    partes = line.split(" ", 1)
+
+    if len(partes) == 2:
+        class_names.append(partes[1])
+    else:
+        class_names.append(partes[0])
+
+
+print("✅ Labels cargados:", class_names)
+
+# =====================================
+
+# PREDICCIÓN
+
+# =====================================
+
+def predict_image(path):
+
+```
+img = Image.open(path).convert("RGB")
+
+img = img.resize((224, 224))
+
+image = np.asarray(img)
+
+normalized_image = (
+    image.astype(np.float32) / 127.5
+) - 1
+
+data = np.ndarray(
+    shape=(1, 224, 224, 3),
+    dtype=np.float32
+)
+
+data[0] = normalized_image
+
+prediction = model.predict(
+    data,
+    verbose=0
+)
+
+index = np.argmax(prediction)
+
+category = class_names[index]
+
+confidence = float(
+    prediction[0][index]
+)
+
+return category, confidence
+
+
+# =====================================
+
+# CONSULTAR ESTADO
+
+# =====================================
+
+@app.get("/estado/{dispositivo_id}")
+def estado(dispositivo_id: int):
+
+
+try:
+
+    cursor.execute("""
+        SELECT
+            estado,
+            categoria,
+            confianza
+        FROM estados_dispositivo
+        WHERE dispositivo_id = %s
+        ORDER BY id DESC
+        LIMIT 1
+    """, (dispositivo_id,))
+
+    fila = cursor.fetchone()
+
+    if fila:
+
+        return {
+            "estado": fila[0],
+            "categoria": fila[1],
+            "confianza": fila[2]
+        }
+
+    return {
+        "estado": "esperando"
+    }
+
+except Exception as e:
+
+    return {
+        "error": str(e)
+    }
+
+# =====================================
+
+# CLASIFICAR
+
+# =====================================
+
+@app.post("/classify")
+async def classify(request: Request):
+
+
+actualizar_estado(
+    1,
+    "clasificando"
+)
+
+print("\n=================================")
+print("📸 Imagen recibida")
+print("=================================")
+
+image_bytes = await request.body()
+
+filename = (
+    f"capturas/captura_{int(time.time())}.jpg"
+)
+
+with open(filename, "wb") as f:
+    f.write(image_bytes)
+
+print("✅ Imagen guardada:", filename)
+
+category, confidence = predict_image(
+    filename
+)
+
+print("♻️ Clasificación:", category)
+print(
+    "📊 Confianza:",
+    round(confidence * 100, 2),
+    "%"
+)
+
+if confidence >= 0.50:
+
+    tipo = "automatica"
+
+    actualizar_estado(
+        1,
+        "automatico",
+        category,
+        confidence
+    )
+
+else:
+
+    tipo = "manual"
+
+    actualizar_estado(
+        1,
+        "manual",
+        category,
+        confidence
+    )
+
+fecha_hora = datetime.now()
+
+try:
+
+    sql = """
+    INSERT INTO clasificaciones
+    (
+        fecha_hora,
+        residuo,
+        confianza,
+        clasificacion,
+        imagen
+    )
+    VALUES
+    (%s,%s,%s,%s,%s)
+    """
+
+    valores = (
+        fecha_hora,
+        category,
+        confidence,
+        tipo,
+        filename
+    )
+
+    cursor.execute(
+        sql,
+        valores
+    )
+
+    db.commit()
+
+    print(
+        "💾 Registro guardado"
+    )
+
+except Exception as e:
+
+    print(
+        "❌ Error guardando"
+    )
+
+    print(e)
+
+return {
+    "status": "ok",
+    "category": category,
+    "confidence": confidence,
+    "tipo": tipo
+}
+
+
+# =====================================
+
+# INICIO
+
+# =====================================
+
+if **name** == "**main**":
+
+
+print(
+    "\n🚀 Iniciando servidor EcoScam..."
+)
+
+uvicorn.run(
+    app,
+    host="0.0.0.0",
+    port=8000
+)
