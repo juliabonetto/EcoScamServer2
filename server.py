@@ -299,6 +299,50 @@ async def classify(request: Request, codigo: str = Query(...), trigger: str = Qu
     }
 
 
+class AvisoLlenado(BaseModel):
+    codigo: str
+    categoria: str = "plastico/vidrio"
+    distancia: float
+
+
+@APP.post("/aviso-llenado")
+def aviso_llenado(data: AvisoLlenado):
+    codigo = data.codigo.strip().upper()
+    dispositivo = db_query_one(
+        "SELECT id FROM dispositivos WHERE codigo_activacion=%s",
+        (codigo,),
+    )
+    if not dispositivo:
+        raise HTTPException(status_code=404, detail="Código inválido")
+
+    db_execute(
+        """
+        UPDATE dispositivos
+        SET alerta_papel=1, distancia_papel=%s
+        WHERE id=%s
+        """,
+        (data.distancia, dispositivo["id"]),
+    )
+    return {"status": "ok", "alerta": True, "distancia": data.distancia}
+
+
+@APP.post("/limpiar-alerta-llenado")
+def limpiar_alerta_llenado(codigo: str = Query(...)):
+    codigo = codigo.strip().upper()
+    dispositivo = db_query_one(
+        "SELECT id FROM dispositivos WHERE codigo_activacion=%s",
+        (codigo,),
+    )
+    if not dispositivo:
+        raise HTTPException(status_code=404, detail="Código inválido")
+
+    db_execute(
+        "UPDATE dispositivos SET alerta_papel=0, distancia_papel=NULL WHERE id=%s",
+        (dispositivo["id"],),
+    )
+    return {"status": "ok", "alerta": False}
+
+
 # ====================== SELECCIÓN MANUAL ========================
 @APP.post("/seleccion-manual")
 async def seleccion_manual(data: SeleccionManual):
